@@ -23,9 +23,21 @@ module.exports = function (RED) {
 
         if (err) {
           node.status({ fill: "red", shape: "dot", text: RED._("oauth2auth.status.failed") });
+          return node.error(err);
         }
 
-        msg.bearerToken = 'Bearer ' + node.credentials.access_token;
+        const creds = RED.nodes.getCredentials(node.id);
+
+        if (!creds || !creds.access_token) {
+          return node.error(RED._("OAuth2Auth.error.no_access_token"));
+        }
+
+        // Obsolete. Use headers.
+        msg.bearerToken = 'Bearer ' + creds.access_token;
+        msg.headers = {
+          Authorization: 'Bearer ' + creds.access_token
+        };
+
         node.send(msg);
       });
     });
@@ -35,10 +47,11 @@ module.exports = function (RED) {
     credentials: {
       client_id: { type: "text" },
       client_secret: { type: "password" },
-      access_token_url: { type: "password" },
+      access_token_url: { type: "text" },
       access_token: { type: "password" },
       refresh_token: { type: "password" },
-      expire_time: { type: "password" },
+      expire_time: { type: "text" },
+      expires_in: { type: "text" },
       auth_time: { type: "text" },
     }
   });
@@ -46,12 +59,30 @@ module.exports = function (RED) {
   OAuth2Auth.prototype.refreshNodeCredentials = function (callback) {
     const node = this;
 
-    node.credentials = RED.nodes.getCredentials(node.id);
+    // Load current creadentials
+    const creds = RED.nodes.getCredentials(node.id);
 
-    if (node.credentials && node.credentials.expire_time && node.credentials.expire_time >= (new Date().getTime() / 1000)) {
-      return callback(null);
+    if (!creds) {
+      const err = "No credentials found for OAuth2 node.";
+      node.error(RED._("oauth2auth.error.no_credentials", { error: err}));
+      return callback(err);
     }
 
+    // Ensure, that the credentials are complete.
+    if (!creds.client_id || !creds.client_secret || !creds.refresh_token) {
+      const err = "OAuth2 credentials incomplete (missing client_id, client_secret or refresh_token).";
+      node.error(RED._("oauth2auth.error.invalid_credentials", { error: err}));
+      return callback(err);
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+
+    // Is the access token still valid?
+    if (creds.expire_time && Number(creds.expire_time) > now) {
+        return callback(null);   // Access token is valid
+    }
+
+    // Access token is expiured - Perform refresh
     request.post({
       url: node.credentials.access_token_url,
       json: true,
@@ -61,23 +92,30 @@ module.exports = function (RED) {
         client_secret: node.credentials.client_secret,
         refresh_token: node.credentials.refresh_token
       }
-    }, function (err, result, data) {
+    }, 
+    function (err, result, data) {
       if (err) {
         node.error(RED._("oauth2auth.error.get_access_token", { error: err }));
         return callback(err);
       }
 
-      if (data.error) {
-        node.error(RED._("oauth2auth.error.something_broke", { error: data.error }));
-        return callback(data.error);
+      if (!data || data.error) {
+        const err = data && data.error ? data.error : "Invalid response from token server";
+        node.error(RED._("oauth2auth.error.something_broke", { error: err }));
+        return callback(err);
       }
 
-      node.credentials.access_token = data.access_token;
-      node.credentials.refresh_token = data.refresh_token;
-      node.credentials.expires_in = data.expires_in;
-      node.credentials.expire_time = data.expires_in + (new Date().getTime() / 1000);
+      const newCredentials = {
+        ...creds,
+        access_token:  data.access_token,
+        refresh_token: data.refresh_token || creds.refresh_token,
+        expires_in:    data.expires_in,
+        expire_time:   now + data.expires_in,
+        auth_time:     now
+      };
 
-      RED.nodes.addCredentials(node.id, node.credentials);
+      // Store new credentials.
+      RED.nodes.addCredentials(node.id, newCredentials);
 
       return callback(null);
     });
@@ -177,4 +215,3 @@ module.exports = function (RED) {
       });
   });
 }
-
