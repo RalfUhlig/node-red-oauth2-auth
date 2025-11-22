@@ -32,8 +32,6 @@ module.exports = function (RED) {
           return node.error(RED._("OAuth2Auth.error.no_access_token"));
         }
 
-        // Obsolete. Use headers.
-        msg.bearerToken = 'Bearer ' + creds.access_token;
         msg.headers = {
           Authorization: 'Bearer ' + creds.access_token
         };
