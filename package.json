@@ -16,21 +16,29 @@
     "authorization"
   ],
   "node-red": {
-    "version": ">=2.0.0",
+    "version": ">=3.1.0",
     "nodes": {
       "oauth2-auth": "oauth2-auth.js"
     }
   },
   "main": "oauth2-auth.js",
+  "files": [
+    "oauth2-auth.js",
+    "oauth2-auth.html",
+    "locales/"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/RalfUhlig/node-red-contrib-oauth2-auth.git"
+    "url": "git+https://github.com/RalfUhlig/node-red-oauth2-auth.git"
   },
   "bugs": {
-    "url": "https://github.com/RalfUhlig/node-red-contrib-oauth2-auth/issues"
+    "url": "https://github.com/RalfUhlig/node-red-oauth2-auth/issues"
   },
-  "homepage": "https://github.com/RalfUhlig/node-red-contrib-oauth2-auth#readme"
+  "homepage": "https://github.com/RalfUhlig/node-red-oauth2-auth#readme"
 }
