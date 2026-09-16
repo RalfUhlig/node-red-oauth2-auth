@@ -61,7 +61,7 @@ module.exports = function (RED) {
         const creds = RED.nodes.getCredentials(node.id);
 
         if (!creds || !creds.access_token) {
-          return node.error(RED._("OAuth2Auth.error.no_access_token"));
+          return node.error(RED._("oauth2auth.error.no_access_token"));
         }
 
         msg.headers = {
@@ -192,7 +192,7 @@ module.exports = function (RED) {
       response_type: 'code',
       state: state,
       scope: scope,
-      prompt: force_login.toLowerCase() === "true" ? "login" : "consent"
+      prompt: String(force_login).toLowerCase() === "true" ? "login" : "consent"
     });
 
     res.cookie('csrf', csrf_token);
@@ -201,7 +201,7 @@ module.exports = function (RED) {
 
   RED.httpAdmin.get('/oauth2-auth/callback', function (req, res) {
     if (req.query.error) {
-      return res.send(RED._("oauth2auth.error.error", { error: req.query.error, description: req.query.error_description }));
+      return res.send(RED._("oauth2auth.error.error", { error: escapeHtml(req.query.error), description: escapeHtml(req.query.error_description || "") }));
     }
 
     if (!req.query.code || !req.query.state) {
@@ -214,7 +214,7 @@ module.exports = function (RED) {
     var credentials = RED.nodes.getCredentials(node_id);
 
     if (!credentials || !credentials.client_id || !credentials.client_secret) {
-      return res.send(RED._("oauth2auth.error.no_credentials"));
+      return res.send(RED._("oauth2auth.error.no_credentials", { error: "No client credentials stored for this node. Please start the authorization again." }));
     }
 
     if (state[1] !== credentials.csrf_token) {
