@@ -43,7 +43,7 @@
   "homepage": "https://github.com/RalfUhlig/node-red-oauth2-auth#readme",
   "devDependencies": {
     "mocha": "^12.0.1",
-    "node-red": "^4.1.15",
+    "node-red": "^5.0.7",
     "node-red-node-test-helper": "^0.3.6"
   }
 }
