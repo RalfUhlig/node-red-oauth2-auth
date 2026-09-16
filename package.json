@@ -31,7 +31,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "mocha \"test/**/*_spec.js\""
   },
   "repository": {
     "type": "git",
@@ -40,5 +40,10 @@
   "bugs": {
     "url": "https://github.com/RalfUhlig/node-red-oauth2-auth/issues"
   },
-  "homepage": "https://github.com/RalfUhlig/node-red-oauth2-auth#readme"
+  "homepage": "https://github.com/RalfUhlig/node-red-oauth2-auth#readme",
+  "devDependencies": {
+    "mocha": "^12.0.1",
+    "node-red": "^4.1.15",
+    "node-red-node-test-helper": "^0.3.6"
+  }
 }
