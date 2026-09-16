@@ -4,6 +4,38 @@ module.exports = function (RED) {
   const crypto = require("crypto");
   const request = require('request');
 
+  // Some WAFs (e.g. Cloudflare in front of Trakt) reject requests without a User-Agent
+  // or with a lower-case "node" in it, so keep this spelling.
+  const USER_AGENT = "Node-RED-OAuth2-Auth/" + require("./package.json").version;
+
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  }
+
+  // Returns null if the token endpoint response is usable, otherwise an error message.
+  function validateTokenResponse(result, data) {
+    const status = result && result.statusCode;
+    const isObject = data !== null && typeof data === "object";
+
+    if (!status || status < 200 || status >= 300 || !isObject || data.error) {
+      let detail;
+
+      if (isObject && data.error) {
+        detail = data.error + (data.error_description ? ": " + data.error_description : "");
+      } else if (data !== undefined && data !== null && data !== "") {
+        detail = (typeof data === "string" ? data : JSON.stringify(data)).substring(0, 200);
+      }
+
+      return "HTTP " + status + (detail ? " - " + detail : "");
+    }
+
+    if (typeof data.access_token !== "string" || !data.access_token) {
+      return "HTTP " + status + " - response contains no access_token";
+    }
+
+    return null;
+  }
+
   function OAuth2AuthConfig(config) {
     RED.nodes.createNode(this, config);
   }
@@ -82,13 +114,17 @@ module.exports = function (RED) {
 
     // Access token is expiured - Perform refresh
     request.post({
-      url: node.credentials.access_token_url,
+      url: creds.access_token_url,
       json: true,
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Accept': 'application/json'
+      },
       form: {
         grant_type: 'refresh_token',
-        client_id: node.credentials.client_id,
-        client_secret: node.credentials.client_secret,
-        refresh_token: node.credentials.refresh_token
+        client_id: creds.client_id,
+        client_secret: creds.client_secret,
+        refresh_token: creds.refresh_token
       }
     }, 
     function (err, result, data) {
@@ -97,18 +133,21 @@ module.exports = function (RED) {
         return callback(err);
       }
 
-      if (!data || data.error) {
-        const err = data && data.error ? data.error : "Invalid response from token server";
-        node.error(RED._("oauth2auth.error.something_broke", { error: err }));
-        return callback(err);
+      const responseError = validateTokenResponse(result, data);
+
+      if (responseError) {
+        node.error(RED._("oauth2auth.error.something_broke", { error: responseError }));
+        return callback(responseError);
       }
+
+      const expiresIn = Number(data.expires_in) || 0;
 
       const newCredentials = {
         ...creds,
         access_token:  data.access_token,
         refresh_token: data.refresh_token || creds.refresh_token,
-        expires_in:    data.expires_in,
-        expire_time:   now + data.expires_in,
+        expires_in:    expiresIn,
+        expire_time:   now + expiresIn,
         auth_time:     now
       };
 
@@ -165,6 +204,10 @@ module.exports = function (RED) {
       return res.send(RED._("oauth2auth.error.error", { error: req.query.error, description: req.query.error_description }));
     }
 
+    if (!req.query.code || !req.query.state) {
+      return res.status(400).send(RED._("oauth2auth.error.error", { error: "invalid_request", description: "Missing code or state." }));
+    }
+
     var auth_code = req.query.code;
     var state = req.query.state.split(':');
     var node_id = state[0];
@@ -181,6 +224,10 @@ module.exports = function (RED) {
     request.post({
       url: credentials.access_token_url,
       json: true,
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Accept': 'application/json'
+      },
       form: {
         grant_type: 'authorization_code',
         code: auth_code,
@@ -194,15 +241,23 @@ module.exports = function (RED) {
           return res.send(RED._("oauth2auth.error.get_access_token", { error: err }));
         }
 
-        if (data.error) {
-          return res.send(RED._("oauth2auth.error.something_broke", { error: data.error }));
+        // Don't store anything if the token exchange failed.
+        const responseError = validateTokenResponse(result, data);
+
+        if (responseError) {
+          return res.status(502).send(RED._("oauth2auth.error.something_broke", { error: escapeHtml(responseError) }));
         }
 
+        const now = Math.floor(Date.now() / 1000);
+        const expiresIn = Number(data.expires_in) || 0;
+
         credentials.access_token = data.access_token;
-        credentials.refresh_token = data.refresh_token;
-        credentials.expires_in = data.expires_in;
-        credentials.expire_time = data.expires_in + (new Date().getTime() / 1000);
-        credentials.auth_time = Date.now();
+        if (data.refresh_token) {
+          credentials.refresh_token = data.refresh_token;
+        }
+        credentials.expires_in = expiresIn;
+        credentials.expire_time = now + expiresIn;
+        credentials.auth_time = now;
 
         delete credentials.csrf_token;
         delete credentials.redirect_url;
