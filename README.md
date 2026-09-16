@@ -8,6 +8,11 @@ The former new element *bearerToken* was removed with version 0.4.0. Sorry for t
 With version 0.4.0, node-red will now store valid tokens on shutdown and reload them on start. So there
 is no need anymore to do the autorization procedure again after node-red was restarted.
 
+With version 0.4.2, a failed token request (e.g. an HTTP error or a non-JSON answer from the token endpoint) is
+reported as an error and no longer stored as a successful authorization. Token requests now send the User-Agent
+*Node-RED-OAuth2-Auth/&lt;version&gt;*, because some providers behind a web application firewall (e.g. Trakt) reject
+requests without one.
+
 I liked to have an indepentent implementation of the oauth2 authentication flow.
 Inspired by <https://github.com/node-red/node-red-web-nodes/tree/master/google>, I implemented this node in a similar way.
 
