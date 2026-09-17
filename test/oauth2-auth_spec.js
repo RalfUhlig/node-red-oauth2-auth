@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("assert");
+const http = require("http");
 const helper = require("node-red-node-test-helper");
 const oauth2AuthModule = require("../oauth2-auth.js");
 const { version } = require("../package.json");
@@ -25,6 +26,15 @@ const CLOUDFLARE_PAGE = "<!DOCTYPE html><html><head><title>Attention Required! |
 
 function nowSeconds() {
   return Math.floor(Date.now() / 1000);
+}
+
+// Returns a token URL on a port where nothing is listening.
+async function unreachableUrl() {
+  const server = http.createServer();
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  await new Promise((resolve) => server.close(resolve));
+  return "http://127.0.0.1:" + port + "/token";
 }
 
 function waitFor(node, event) {
@@ -122,6 +132,7 @@ describe("oauth2-auth node", function () {
       assert.strictEqual(request.form.grant_type, "refresh_token");
       assert.strictEqual(request.form.refresh_token, "OLD_REFRESH");
       assert.strictEqual(request.headers["user-agent"], "Node-RED-OAuth2-Auth/" + version);
+      assert.strictEqual(request.headers["content-type"], "application/x-www-form-urlencoded");
 
       const creds = getCredentials();
       assert.strictEqual(creds.access_token, "NEW_ACCESS");
@@ -152,6 +163,18 @@ describe("oauth2-auth node", function () {
         assert.strictEqual(getCredentials().refresh_token, "OLD_REFRESH");
       });
     }
+
+    it("reports an unreachable token endpoint on refresh and keeps the stored credentials", async function () {
+      await helper.load(oauth2AuthNode, flow, storedCredentials({ expire_time: 1, access_token_url: await unreachableUrl() }));
+      const node = helper.getNode(NODE_ID);
+      const failed = waitFor(node, "call:error");
+
+      node.receive({ payload: "x" });
+
+      const call = await failed;
+      assert.match(String(call.args[0]), /get_access_token .*ECONNREFUSED/);
+      assert.strictEqual(getCredentials().access_token, "OLD_ACCESS");
+    });
   });
 
   describe("authorization callback", function () {
@@ -171,6 +194,8 @@ describe("oauth2-auth node", function () {
       assert.strictEqual(request.form.grant_type, "authorization_code");
       assert.strictEqual(request.form.code, "abc");
       assert.strictEqual(request.headers["user-agent"], "Node-RED-OAuth2-Auth/" + version);
+      assert.strictEqual(request.headers["content-type"], "application/x-www-form-urlencoded");
+      assert.strictEqual(request.form.redirect_uri, "http://localhost:1880/oauth2-auth/callback");
 
       const creds = getCredentials();
       assert.strictEqual(creds.access_token, "AUTH_ACCESS");
@@ -193,6 +218,20 @@ describe("oauth2-auth node", function () {
       assert.doesNotMatch(res.text, /<!DOCTYPE/);
       assert.strictEqual(getCredentials().access_token, undefined);
       assert.strictEqual(getCredentials().refresh_token, undefined);
+    });
+
+    it("reports an unreachable token endpoint and stores no tokens", async function () {
+      await helper.load(oauth2AuthNode, flow, storedCredentials());
+      const state = await startAuthorization();
+      helper.credentials.get(NODE_ID).access_token_url = await unreachableUrl();
+
+      const res = await helper.request()
+        .get("/oauth2-auth/callback")
+        .query({ code: "abc", state })
+        .expect(502);
+
+      assert.match(res.text, /get_access_token .*ECONNREFUSED/);
+      assert.strictEqual(getCredentials().access_token, undefined);
     });
 
     it("rejects a wrong CSRF token", async function () {

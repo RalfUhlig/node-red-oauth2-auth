@@ -2,19 +2,51 @@ module.exports = function (RED) {
   "use strict";
 
   const crypto = require("crypto");
-  const request = require('request');
 
   // Some WAFs (e.g. Cloudflare in front of Trakt) reject requests without a User-Agent
   // or with a lower-case "node" in it, so keep this spelling.
   const USER_AGENT = "Node-RED-OAuth2-Auth/" + require("./package.json").version;
+  const TOKEN_REQUEST_TIMEOUT = 30000;
 
   function escapeHtml(text) {
     return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   }
 
+  // Posts the form to the token endpoint and calls back with (err, status, data).
+  // data is the parsed JSON body, or the raw text if the body is no JSON.
+  function postTokenRequest(url, form, callback) {
+    // Skip undefined values instead of sending "undefined".
+    const body = new URLSearchParams(Object.entries(form).filter(([, value]) => value !== undefined));
+
+    fetch(url, {
+      method: "POST",
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Accept': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: body,
+      redirect: "manual",
+      signal: AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT)
+    })
+      .then((response) => response.text().then((text) => {
+        let data = text;
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          // Keep the raw text, validateTokenResponse reports it.
+        }
+        return { status: response.status, data: data };
+      }))
+      .then(
+        (result) => callback(null, result.status, result.data),
+        // fetch only says "fetch failed", the actual reason is in the cause.
+        (err) => callback((err.cause && err.cause.message) || err.message || String(err))
+      );
+  }
+
   // Returns null if the token endpoint response is usable, otherwise an error message.
-  function validateTokenResponse(result, data) {
-    const status = result && result.statusCode;
+  function validateTokenResponse(status, data) {
     const isObject = data !== null && typeof data === "object";
 
     if (!status || status < 200 || status >= 300 || !isObject || data.error) {
@@ -113,27 +145,19 @@ module.exports = function (RED) {
     }
 
     // Access token is expiured - Perform refresh
-    request.post({
-      url: creds.access_token_url,
-      json: true,
-      headers: {
-        'User-Agent': USER_AGENT,
-        'Accept': 'application/json'
-      },
-      form: {
-        grant_type: 'refresh_token',
-        client_id: creds.client_id,
-        client_secret: creds.client_secret,
-        refresh_token: creds.refresh_token
-      }
-    }, 
-    function (err, result, data) {
+    postTokenRequest(creds.access_token_url, {
+      grant_type: 'refresh_token',
+      client_id: creds.client_id,
+      client_secret: creds.client_secret,
+      refresh_token: creds.refresh_token
+    },
+    function (err, status, data) {
       if (err) {
         node.error(RED._("oauth2auth.error.get_access_token", { error: err }));
         return callback(err);
       }
 
-      const responseError = validateTokenResponse(result, data);
+      const responseError = validateTokenResponse(status, data);
 
       if (responseError) {
         node.error(RED._("oauth2auth.error.something_broke", { error: responseError }));
@@ -221,28 +245,20 @@ module.exports = function (RED) {
       return res.status(401).send(RED._("oauth2auth.error.csrf_token_mismatch"));
     }
    
-    request.post({
-      url: credentials.access_token_url,
-      json: true,
-      headers: {
-        'User-Agent': USER_AGENT,
-        'Accept': 'application/json'
-      },
-      form: {
-        grant_type: 'authorization_code',
-        code: auth_code,
-        client_id: credentials.client_id,
-        client_secret: credentials.client_secret,
-        redirect_uri: credentials.redirect_url,
-      }
+    postTokenRequest(credentials.access_token_url, {
+      grant_type: 'authorization_code',
+      code: auth_code,
+      client_id: credentials.client_id,
+      client_secret: credentials.client_secret,
+      redirect_uri: credentials.redirect_url,
     },
-      function (err, result, data) {
+      function (err, status, data) {
         if (err) {
-          return res.send(RED._("oauth2auth.error.get_access_token", { error: err }));
+          return res.status(502).send(RED._("oauth2auth.error.get_access_token", { error: escapeHtml(err) }));
         }
 
         // Don't store anything if the token exchange failed.
-        const responseError = validateTokenResponse(result, data);
+        const responseError = validateTokenResponse(status, data);
 
         if (responseError) {
           return res.status(502).send(RED._("oauth2auth.error.something_broke", { error: escapeHtml(responseError) }));
