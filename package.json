@@ -1,10 +1,7 @@
 {
   "name": "@ralfuhlig/node-red-oauth2-auth",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "node-red-oauth2-auth - OAuth2 client for getting oauth2 credentials by the authorization flow to use in other nodes. Credentials are automatically refreshed on expiration.",
-  "dependencies": {
-    "request": "^2.88.2"
-  },
   "author": "Ralf Uhlig <ralf@uhlig-online.de>",
   "contributors": [],
   "license": "Apache-2.0",
@@ -45,5 +42,8 @@
     "mocha": "^12.0.1",
     "node-red": "^5.0.7",
     "node-red-node-test-helper": "^0.3.6"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
   }
 }
